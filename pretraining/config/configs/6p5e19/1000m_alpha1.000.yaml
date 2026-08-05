@@ -35,20 +35,16 @@ training:
   save_dir: "checkpoints"
 
 data:
-  txt_path: "/data/pretrain_v1_20b"
+  txt_path: "/data/pretrain_v1_54b"
   pretrain_tokens: 10515696000
-  eval_holdout: 2
+  # Placeholder held-out eval shards -- replace with your own paths.
+  # If none of them exist, the trainer warns and holds out the last
+  # `eval_holdout` training shards instead.
+  eval_txt_files:
+    - "/data/eval/holdout_shard_00.npy"
+    - "/data/eval/holdout_shard_01.npy"
 
 tokenizer:
   name: "LanTokenizer"
   special_tokens: ["<bos>", "<eos>", "<pad>"]
   include_move_numbers: false
-
-logging:
-  backend: "wandb"
-  entity: ""  # set your WandB entity here, or pass WANDB_ENTITY
-  project: "chess-scaling-C_6p5e19"
-  notes: "C=6.5e19 alpha=1.000 1000m"
-  tags: ["C_6p5e19", "alpha1.000", "1000m"]
-  mode: "online"
-  hf_upload_repo: "chess-pre-to-post/1000m_C_6p5e19_alpha1.000"

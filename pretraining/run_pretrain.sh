@@ -28,7 +28,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${CONFIG:-}"
 CONFIG_DIR="${CONFIG_DIR:-}"
 # Directory of tokenized pretraining shards (.npy). Maps to data.txt_path.
-DATA_DIR="${DATA_DIR:-${REPO_ROOT}/data/pretrain_v1_20b}"
+DATA_DIR="${DATA_DIR:-${REPO_ROOT}/data/pretrain_v1_54b}"
 # Where checkpoints are written. Maps to training.save_dir.
 OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/checkpoints}"
 # Optional base path for held-out eval rollout test files (data.test_data_dir).
@@ -39,6 +39,8 @@ NUM_GPUS="${NUM_GPUS:-1}"
 MAX_CHECKPOINTS="${MAX_CHECKPOINTS:-3}"
 # Weights & Biases team/entity. Leave empty to use your default wandb account.
 WANDB_ENTITY="${WANDB_ENTITY:-}"
+# Weights & Biases project. The configs carry no logging block, so set it here.
+WANDB_PROJECT="${WANDB_PROJECT:-chess-pretraining}"
 
 if [[ -z "${CONFIG}" && -z "${CONFIG_DIR}" ]]; then
   echo "ERROR: set CONFIG=<file.yaml> or CONFIG_DIR=<dir of yamls>." >&2
@@ -58,6 +60,7 @@ fi
 export PYTHONUNBUFFERED=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 [[ -n "${WANDB_ENTITY}" ]] && export WANDB_ENTITY="${WANDB_ENTITY}"
+export WANDB_PROJECT="${WANDB_PROJECT}"
 
 echo "=========================================="
 echo "[pretrain] ${#configs[@]} config(s) | ${NUM_GPUS} GPU(s)"

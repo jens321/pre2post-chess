@@ -24,8 +24,24 @@ rather than editing the defaults.
 ## Data
 
 Training reads a directory of **tokenized `.npy` shards** (`data.txt_path`, or
-`--data_dir`). The last `data.eval_holdout` shards are held out for validation.
-Point `DATA_DIR` at your tokenized shard directory.
+`--data_dir`). Point `DATA_DIR` at your tokenized shard directory.
+
+Validation shards are chosen in this order:
+
+1. `data.eval_txt_files` — explicit paths (dirs, globs, or single files). The
+   shipped configs list **placeholder** paths under `/data/eval/`; replace them
+   with your own.
+2. If those match nothing, the trainer warns and falls back to holding out the
+   last `data.eval_holdout` shards of the training set (default `1`).
+
+## Logging
+
+The configs carry no `logging:` block. W&B project and entity come from the
+`WANDB_PROJECT` and `WANDB_ENTITY` environment variables (project defaults to
+`chess-pretraining`); the run name is `training.experiment_name`. Set
+`WANDB_MODE=offline` or `disabled` to change or turn off syncing. To pin these
+per config, add an optional `logging:` block with `project:` / `entity:` /
+`notes:` / `tags:` — it takes precedence over the environment.
 
 ---
 
@@ -52,7 +68,7 @@ bash run_pretrain.sh
 `run_pretrain.sh` calls `accelerate launch scripts/train/train_hf.py` with
 `--auto_resume`, so re-running picks up from the latest checkpoint. All knobs are
 environment variables: `CONFIG` / `CONFIG_DIR`, `DATA_DIR`, `OUTPUT_DIR`,
-`TEST_DATA_DIR`, `NUM_GPUS`, `MAX_CHECKPOINTS`, `WANDB_ENTITY`.
+`TEST_DATA_DIR`, `NUM_GPUS`, `MAX_CHECKPOINTS`, `WANDB_ENTITY`, `WANDB_PROJECT`.
 
 ---
 
@@ -70,16 +86,16 @@ linearly with `α` (e.g. for 410m at `C_total=6.5e18`: `α=1.0 → 2.64B` tokens
 All models are Qwen3-style decoder-only transformers with GQA
 (`num_key_value_heads=4`, `head_dim=128`), `block_size=1024`, and no dropout.
 
-| Size  | Layers | d_model | Heads | KV heads | FFN (intermediate) | Config dir       |
-|-------|:------:|:-------:|:-----:|:--------:|:------------------:|------------------|
-| 20m   | 6      | 512     | 4     | 4        | 1536               | `6p5e18_small`   |
-| 32m   | 8      | 512     | 8     | 4        | 1536               | `6p5e18_small`   |
-| 50m   | 12     | 512     | 8     | 4        | 1536               | `6p5e18`         |
-| 100m  | 12     | 768     | 12    | 4        | 2304               | `6p5e18`, `6p5e19` |
-| 200m  | 24     | 768     | 12    | 4        | 2304               | `6p5e18`, `6p5e19` |
-| 410m  | 28     | 1024    | 16    | 4        | 3072               | `6p5e18`, `6p5e19` |
-| 680m  | 30     | 1280    | 20    | 4        | 3840               | `6p5e18`, `6p5e19` |
-| 1000m | 32     | 1536    | 24    | 4        | 4608               | `6p5e18`, `6p5e19` |
+| Size  | Layers | d_model | Heads | KV heads | FFN (intermediate) |
+|-------|:------:|:-------:|:-----:|:--------:|:------------------:|
+| 20m   | 6      | 512     | 4     | 4        | 1536               |
+| 32m   | 8      | 512     | 8     | 4        | 1536               |
+| 50m   | 12     | 512     | 8     | 4        | 1536               |
+| 100m  | 12     | 768     | 12    | 4        | 2304               |
+| 200m  | 24     | 768     | 12    | 4        | 2304               |
+| 410m  | 28     | 1024    | 16    | 4        | 3072               |
+| 680m  | 30     | 1280    | 20    | 4        | 3840               |
+| 1000m | 32     | 1536    | 24    | 4        | 4608               |
 
 ### Training configs
 

@@ -90,6 +90,20 @@ rollouts/step), 2560-token responses: **≈ 30 s/step** (~50 min per 100 steps,
 (`batch × group`) and response length, and drifts up as responses grow toward
 `RES_LENGTH`. Time a few steps before extrapolating a different config.
 
+**Speed-up tip.** The multi-turn rollout dominates step time, and its cost grows
+with the number of sequential env-interaction rounds (each round is one blocking
+`vllm.generate` call that waits for the slowest active sample). Capping the
+number of rounds is the cheapest lever — add to `run_multi_turn.sh`:
+
+```bash
+actor_rollout_ref.rollout.multi_turn.max_env_calls=4 \
+```
+
+This bounds each episode to **at most 5 model-generation rounds** (4 env calls +
+the final turn) instead of the default 7, accelerating training. Trade-off:
+trajectories that legitimately need more than 4 env interactions get cut short,
+so verify it against your task before committing.
+
 ### Evaluate
 
 `eval_bash/verl_eval.sh` is the single-checkpoint engine;

@@ -1,0 +1,14 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments / packaging
+*.egg-info/
+.venv/
+venv/
+
+# Training artifacts
+checkpoints/
+wandb/
+*.log

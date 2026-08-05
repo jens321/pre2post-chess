@@ -21,7 +21,7 @@ class HFTrainer:
         self.run_cfg_path = run_config_path
         self._hf_upload_thread = None   # track background upload thread
         self._hf_repo_cleared = False   # clear repo once per training run
-        backend = cfg.logging.get("backend", "wandb")
+        backend = self._logging_cfg().get("backend", "wandb")
         # Enable mixed precision training for better GPU utilization
         mixed_precision = cfg.training.get("mixed_precision", "no")  # bf16, fp16, or no
         gradient_accumulation_steps = cfg.training.get("gradient_accumulation_steps", 1)
@@ -31,6 +31,14 @@ class HFTrainer:
             gradient_accumulation_steps=gradient_accumulation_steps
         )
         self._init_all()
+
+    def _logging_cfg(self):
+        """Tracker settings from the optional `logging:` config block.
+
+        Configs ship without a `logging:` block: entity/project come from the
+        WANDB_ENTITY / WANDB_PROJECT environment variables instead.
+        """
+        return self.cfg.get("logging", None) or {}
 
     # ---------------- core builders ----------------
     def _init_all(self):
@@ -48,9 +56,19 @@ class HFTrainer:
         # ----- dataloaders -----
         all_files = self._expand_txt_files(self.dcfg)
 
-        if "eval_txt_files" in self.dcfg and self.dcfg.eval_txt_files:
-            # explicit eval files (expand them too)
-            self.eval_files = self._expand_txt_files({"txt_files": self.dcfg.eval_txt_files})
+        # Explicit eval shards win; otherwise hold out the last `eval_holdout`
+        # training shards. Configs ship placeholder eval paths, so a set of
+        # eval_txt_files that resolves to nothing warns and falls back rather
+        # than aborting the run.
+        self.eval_files = []
+        eval_txt_files = self.dcfg.get("eval_txt_files", None)
+        if eval_txt_files:
+            self.eval_files = self._expand_paths(eval_txt_files)
+            if not self.eval_files:
+                self.acc.print(f"[warn] data.eval_txt_files matched no files ({list(eval_txt_files)}); "
+                               f"falling back to data.eval_holdout")
+
+        if self.eval_files:
             self.train_files = [p for p in all_files if p not in set(self.eval_files)]
         else:
             k = int(self.dcfg.get("eval_holdout", 1))
@@ -307,7 +325,8 @@ class HFTrainer:
             self.save_dir.mkdir(parents=True, exist_ok=True)
 
         # init trackers on ALL ranks (Accelerate will manage rank-0 setup)
-        project_name = self.cfg.logging.get("project", "llm-training")
+        project_name = (self._logging_cfg().get("project", None)
+                        or os.environ.get("WANDB_PROJECT", "chess-pretraining"))
         self.acc.print(f"Initing trackers: project={project_name} run={run_name}")
         self.acc.init_trackers(
             project_name,                      
@@ -553,11 +572,11 @@ class HFTrainer:
         kinds = self.acc.log_with if isinstance(self.acc.log_with, (list, tuple)) else [self.acc.log_with]
         if "wandb" not in kinds:
             return {}
-        lg = self.cfg.logging
+        lg = self._logging_cfg()
         return {
             "wandb": {
                 # project is positional in init_trackers; don't duplicate here
-                "entity": lg.get("entity", None),
+                "entity": lg.get("entity", None) or os.environ.get("WANDB_ENTITY", None),
                 "name": run_name,                 
                 "notes": lg.get("notes", None),
                 "tags": lg.get("tags", []),
@@ -593,10 +612,6 @@ class HFTrainer:
         if eval_interval is None:
             eval_interval = max(10, int(total_opt_steps * self.tcfg.get("eval_ratio", 0.1)))
 
-        eval_rollouts_interval = self.tcfg.get("eval_rollouts_interval", None)
-        if eval_rollouts_interval is None:
-            eval_rollouts_interval = max(10, int(total_opt_steps * self.tcfg.get("eval_rollouts_ratio", 0.2)))
-
         save_hf_interval = self.tcfg.get("save_hf_interval", None)
         if save_hf_interval is None:
             save_hf_interval = max(50, int(total_opt_steps * self.tcfg.get("save_hf_ratio", 0.1)))
@@ -606,8 +621,7 @@ class HFTrainer:
             self.save_interval = max(50, int(total_opt_steps * self.tcfg.get("save_ratio", 0.2)))
 
         self.acc.print(f"[train] total_opt_steps={total_opt_steps}, save_interval={self.save_interval}, "
-                       f"save_hf_interval={save_hf_interval}, eval_interval={eval_interval}, "
-                       f"eval_rollouts_interval={eval_rollouts_interval}")
+                       f"save_hf_interval={save_hf_interval}, eval_interval={eval_interval}")
 
         for epoch in range(self.current_epoch, self.epochs):
             self.current_epoch = epoch
@@ -749,125 +763,6 @@ class HFTrainer:
         
         return metrics
     
-    # Eval rollout table: (EvaluatorClass, relative_path, prefix, max_samples)
-    # Paths are relative to data.test_data_dir
-    _ROLLOUT_EVAL_TABLE = [
-        # By Elo + phase
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_intermediate_opening.parquet", "human_intermediate_opening", 100),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_intermediate_middlegame.parquet", "human_intermediate_midgame", 100),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_intermediate_endgame.parquet", "human_intermediate_endgame", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_advanced_opening.parquet", "human_advanced_opening", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_advanced_middlegame.parquet", "human_advanced_midgame", 100),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_advanced_endgame.parquet", "human_advanced_endgame", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_expert_opening.parquet", "human_expert_opening", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_expert_middlegame.parquet", "human_expert_midgame", 100),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_expert_endgame.parquet", "human_expert_endgame", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_master_opening.parquet", "human_master_opening", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_master_middlegame.parquet", "human_master_midgame", 100),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_elo_phase_master_endgame.parquet", "human_master_endgame", 50),
-        # By move type
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_move_type_capture.parquet", "human_capture", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_move_type_check.parquet", "human_check", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_move_type_castling.parquet", "human_castling", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_move_type_checkmate.parquet", "human_checkmate", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_move_type_promotion.parquet", "human_promotion", 50),
-        # By piece
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_piece_bishop.parquet", "human_bishop", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_piece_knight.parquet", "human_knight", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_piece_pawn.parquet", "human_pawn", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_piece_queen.parquet", "human_queen", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_piece_rook.parquet", "human_rook", 50),
-        (HumanGamesEvaluator, "test_sets_2508/final/human_test_by_piece_king.parquet", "human_king", 50),
-        # Puzzles & random
-        (PuzzlesEvaluator, "chess/test/puzzles_grandmaster.csv", "puzzles_grandmaster", 100),
-        (PuzzlesEvaluator, "chess/test/puzzles_test.csv", "puzzles_test", 100),
-        (RandomGamesEvaluator, "chess/test/random_games_100.parquet", "random_games", 100),
-    ]
-
-    @torch.no_grad()
-    def _evaluate_rollouts(self, current_step: int, max_steps: int | None = None):
-        metrics = {}
-
-        if not self.acc.is_main_process:
-            return metrics
-
-        base_model = self.acc.unwrap_model(self.model)
-        base_model.eval()
-        if hasattr(base_model, "gradient_checkpointing_disable"):
-            base_model.gradient_checkpointing_disable()
-
-        evaluator_kwargs = {
-            "model": base_model,
-            "tokenizer": self.tok,
-            "device": self.acc.device,
-            "move_format": "uci",
-            "batch_size": 32,
-            "max_new_tokens": 10,
-            "temperature": 1.0,
-            "top_k": None
-        }
-
-        test_data_dir = self.dcfg.get("test_data_dir", "${REPO_ROOT}/data")
-
-        # Build eval_configs from table, skipping missing files
-        eval_configs = []
-        for eval_cls, rel_path, prefix, max_samples in self._ROLLOUT_EVAL_TABLE:
-            file_path = os.path.join(test_data_dir, rel_path)
-            if not os.path.exists(file_path):
-                continue
-            eval_configs.append({
-                "evaluator": eval_cls(**evaluator_kwargs),
-                "file": file_path,
-                "prefix": prefix,
-                "max_samples": max_samples,
-            })
-
-        if not eval_configs:
-            self.acc.print(f"[eval_rollouts] No test files found under {test_data_dir}, skipping rollout eval")
-            return metrics
-        for config in eval_configs:
-            pred_dir = f"{self.save_dir}/rollouts/validation/{config['prefix']}"
-            os.makedirs(pred_dir, exist_ok=True)
-
-            output_path = f"{pred_dir}/predictions_{current_step}.parquet"
-            output_metrics_path = f"{pred_dir}/metrics.jsonl"
-            eval_metrics = config["evaluator"].evaluate_and_save_predictions(
-                config["file"],
-                output_path=output_path,
-                max_samples=config["max_samples"],
-                verbose=False                  
-            )
-            import json
-            record = {"step": current_step, "prefix": config["prefix"], **eval_metrics}
-            with open(output_metrics_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            metrics.update({
-                f"{config['prefix']}_{k}": v
-                for k, v in eval_metrics.items()
-                if "num" not in k
-            })
-            self.acc.print(f"Saved predictions for {config['prefix']} to {output_path}")
-
-        # Move-level entropy & top-k probability mass on test files
-        for config in eval_configs:
-            try:
-                ent_metrics = self._compute_test_entropy(
-                    config["evaluator"], config["file"],
-                    base_model, max_samples=75,
-                )
-                if ent_metrics is not None:
-                    for k, v in ent_metrics.items():
-                        metrics[f"{config['prefix']}_{k}"] = v
-                    self.acc.print(
-                        f"[entropy] {config['prefix']}: entropy={ent_metrics['entropy']:.4f} "
-                        f"top1={ent_metrics['top1_mass']:.3f} "
-                        f"top5={ent_metrics['top5_mass']:.3f}"
-                    )
-            except Exception as e:
-                self.acc.print(f"[entropy] {config['prefix']} failed: {e}")
-
-        return metrics
-
     @torch.no_grad()
     def _compute_test_entropy(self, evaluator, file_path, model, max_samples=100):
         """Compute move-level entropy and top-k probability mass on test positions.
@@ -1588,7 +1483,22 @@ class HFTrainer:
             json.dump(gen_config, f, indent=2)
 
     def _expand_txt_files(self, dcfg):
-        """Return a sorted list[Path] of shard files from config."""
+        """Return a sorted list[Path] of training shard files from config."""
+        if "txt_files" in dcfg and dcfg.get("txt_files"):
+            items = dcfg.get("txt_files")
+        elif "txt_path" in dcfg and dcfg.get("txt_path"):
+            items = dcfg.get("txt_path")
+        else:
+            raise ValueError("Config must provide data.txt_files or data.txt_path")
+
+        uniq = self._expand_paths(items)
+        if not uniq:
+            raise FileNotFoundError("No shards found from data paths.")
+        return uniq
+
+    def _expand_paths(self, items):
+        """Expand dirs / globs / single files into a de-duplicated list[Path]."""
+        import glob
         from pathlib import Path
         def expand_one(p):
             p = Path(p)
@@ -1602,22 +1512,17 @@ class HFTrainer:
                     return files
                 return sorted(p.glob("*.txt")) + sorted(p.glob("*.npy"))
             # allow simple glob strings too, e.g. '/data/chess/raw.*.txt'
+            # (glob.glob handles absolute patterns; Path().glob does not)
             if any(ch in str(p) for ch in "*?[]"):
-                return sorted(Path().glob(str(p)))
+                return [Path(m) for m in sorted(glob.glob(str(p)))]
             # single file
             return [p] if p.exists() else []
 
+        if isinstance(items, (str, Path)):
+            items = [items]
         out = []
-        if "txt_files" in dcfg and dcfg.txt_files:
-            items = dcfg.txt_files
-            if isinstance(items, (str, Path)):
-                items = [items]
-            for it in items:
-                out.extend(expand_one(it))
-        elif "txt_path" in dcfg and dcfg.txt_path:
-            out.extend(expand_one(dcfg.txt_path))
-        else:
-            raise ValueError("Config must provide data.txt_files or data.txt_path")
+        for it in items:
+            out.extend(expand_one(it))
 
         # de-dup while preserving insertion order (shard_dir → filename order)
         seen = set()
@@ -1626,6 +1531,4 @@ class HFTrainer:
             if p not in seen:
                 seen.add(p)
                 uniq.append(p)
-        if not uniq:
-            raise FileNotFoundError("No shards found from data paths.")
         return uniq
