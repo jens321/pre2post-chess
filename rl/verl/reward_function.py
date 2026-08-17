@@ -199,21 +199,23 @@ def compute_score_batch(data_sources, solution_strs, ground_truths, extra_infos)
                 if _is_complete_move(_tok):
                     _extracted.append(_tok.strip())
 
-            # Compare only at player positions (even indices: 0, 2, 4, ...)
+            # Ground truth is a flat list of SOLVER moves only. In the model's
+            # output, solver moves live at even positions of _extracted (odd
+            # positions are env replies). So compare _gt[i] to _extracted[2*i].
             _correct = 0
-            _total_player = 0
-            for _i in range(0, len(_gt), 2):
+            _total_player = len(_gt)
+            for _i in range(_total_player):
                 _gt_uci = str(_gt[_i]).strip()
-                _total_player += 1
-                if _i < len(_extracted):
+                _pred_idx = 2 * _i
+                if _pred_idx < len(_extracted):
                     try:
-                        _pred_uci = lan_to_uci(_extracted[_i])
+                        _pred_uci = lan_to_uci(_extracted[_pred_idx])
                     except ValueError:
                         _pred_uci = ''
                     if _pred_uci == _gt_uci:
                         _correct += 1
 
-            if _correct == _total_player:
+            if _total_player > 0 and _correct == _total_player:
                 score = 1.0
             else:
                 score = 0.0
