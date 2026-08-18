@@ -1403,7 +1403,7 @@ class HFTrainer:
     
     def _save_hf_model(self, path):
         """Save model + tokenizer in HuggingFace format (from_pretrained compatible)."""
-        from .hf_tokenizer_utils import save_hf_tokenizer
+        from sft.training.hf_tokenizer_utils import save_hf_tokenizer
         path = pathlib.Path(path)
         path.mkdir(parents=True, exist_ok=True)
 
