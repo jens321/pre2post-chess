@@ -41,6 +41,17 @@ MAX_CHECKPOINTS="${MAX_CHECKPOINTS:-3}"
 WANDB_ENTITY="${WANDB_ENTITY:-}"
 # Weights & Biases project. The configs carry no logging block, so set it here.
 WANDB_PROJECT="${WANDB_PROJECT:-chess-pretraining}"
+# Optional space-separated OmegaConf overrides.
+OVERRIDES="${OVERRIDES:-}"
+# Mixed precision for the accelerate launcher: bf16, fp16, or no.
+MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
+# Rendezvous port for multi-GPU runs. Defaults to a free port so that concurrent
+# runs on one node do not collide. Must be a real port: 0 makes non-zero ranks
+# hang forever trying to connect to MASTER_PORT=0.
+MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-$(
+  python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()' \
+    2>/dev/null || echo 29500
+)}"
 
 if [[ -z "${CONFIG}" && -z "${CONFIG_DIR}" ]]; then
   echo "ERROR: set CONFIG=<file.yaml> or CONFIG_DIR=<dir of yamls>." >&2
@@ -66,6 +77,7 @@ echo "=========================================="
 echo "[pretrain] ${#configs[@]} config(s) | ${NUM_GPUS} GPU(s)"
 echo "[pretrain] data_dir=${DATA_DIR}"
 echo "[pretrain] output_dir=${OUTPUT_DIR}"
+echo "[pretrain] mixed_precision=${MIXED_PRECISION} | main_process_port=${MAIN_PROCESS_PORT}"
 echo "=========================================="
 
 for cfg in "${configs[@]}"; do
@@ -75,14 +87,30 @@ for cfg in "${configs[@]}"; do
 
   extra_args=()
   [[ -n "${TEST_DATA_DIR}" ]] && extra_args+=(--test_data_dir "${TEST_DATA_DIR}")
+  override_args=()
+  if [[ -n "${OVERRIDES}" ]]; then
+    read -r -a overrides <<< "${OVERRIDES}"
+    override_args+=(--override "${overrides[@]}")
+  fi
+  launch_args=(
+    --num_processes "${NUM_GPUS}"
+    --num_machines 1
+    --mixed_precision "${MIXED_PRECISION}"
+    --dynamo_backend no
+    --main_process_port "${MAIN_PROCESS_PORT}"
+  )
+  if (( NUM_GPUS > 1 )); then
+    launch_args+=(--multi_gpu)
+  fi
 
-  accelerate launch --num_processes "${NUM_GPUS}" \
+  accelerate launch "${launch_args[@]}" \
     "${REPO_ROOT}/scripts/train/train_hf.py" \
     --config "${cfg}" \
     --auto_resume \
     --data_dir "${DATA_DIR}" \
     --output_dir "${OUTPUT_DIR}" \
     --max_checkpoints "${MAX_CHECKPOINTS}" \
+    "${override_args[@]}" \
     "${extra_args[@]}"
 done
 
