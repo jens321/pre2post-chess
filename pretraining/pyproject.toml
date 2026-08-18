@@ -1,0 +1,29 @@
+[project]
+name = "pre2post-chess-pretraining"
+version = "0.1.0"
+description = "Chess pretraining (HF trainer + accelerate)."
+requires-python = ">=3.11,<3.12"
+
+# Versions are pinned to the environment this project was developed against.
+# Bump deliberately, then re-run `uv lock`.
+dependencies = [
+    "accelerate==1.10.1",
+    "chess==1.11.2",
+    "huggingface-hub==0.36.2",
+    "numpy==2.2.6",
+    "omegaconf==2.3.0",
+    "pandas==2.3.3",
+    "pyarrow==21.0.0",
+    "safetensors==0.8.0",
+    "scipy>=1.14",
+    "tokenizers==0.22.2",
+    "torch==2.9.0",
+    "tqdm==4.67.1",
+    "transformers==4.57.1",
+    "wandb==0.28.1",
+]
+
+[tool.uv]
+# Not an installable package: `scripts/train/train_hf.py` puts `pretraining/`
+# and the repo root on sys.path itself, so uv only manages dependencies here.
+package = false

@@ -2,16 +2,30 @@
 
 ## Environment
 
-Use the provided conda environment (named `pretraining`):
+This directory is a self-contained [uv](https://docs.astral.sh/uv/) project
+(`pyproject.toml` + `uv.lock`). Create the environment with:
 
 ```bash
-conda env create -f environment.yml   # creates env "pretraining"
-conda activate pretraining
+cd pretraining
+uv sync            # creates pretraining/.venv from uv.lock
 ```
 
-Core dependencies: `torch>=2.6`, `accelerate`, `transformers>=4.50`,
-`omegaconf`, `python-chess`, `numpy`, `pandas`, `pyarrow`, `wandb` (optional).
+You do **not** need to activate anything — prefix commands with `uv run`, which
+re-syncs the venv before each invocation:
+
+```bash
+uv run python scripts/train/train_hf.py --help
+```
+
+`run_pretrain.sh` already wraps its `accelerate launch` in `uv run`, so it works
+from any shell as long as `uv` is on `PATH` (or `UV=/path/to/uv` is set).
+
+Core dependencies: `torch`, `accelerate`, `transformers`, `omegaconf`,
+`python-chess`, `numpy`, `pandas`, `pyarrow`, `scipy`, `wandb`. Versions are
+pinned in `pyproject.toml`; change them there and re-run `uv lock`.
 Multi-GPU training is driven by `accelerate launch`.
+
+`environment.yml` is the older conda recipe, kept only for reference — prefer uv.
 
 ### `${REPO_ROOT}` placeholder
 
@@ -24,7 +38,10 @@ rather than editing the defaults.
 ## Data
 
 Training reads a directory of **tokenized `.npy` shards** (`data.txt_path`, or
-`--data_dir`). Point `DATA_DIR` at your tokenized shard directory.
+`--data_dir`). Point `DATA_DIR` at your tokenized shard directory. If you leave
+`DATA_DIR` unset, `run_pretrain.sh` omits `--data_dir` and the config's own
+`data.txt_path` is used as-is (the shipped configs point at a **placeholder**
+`/data/pretrain_v1_54b`).
 
 Validation shards are chosen in this order:
 
@@ -48,7 +65,7 @@ per config, add an optional `logging:` block with `project:` / `entity:` /
 ## Quick start
 
 ```bash
-conda activate pretraining
+cd pretraining   # run_pretrain.sh handles the venv via `uv run`
 
 # One config:
 CONFIG=config/configs/6p5e18/410m_alpha1.000.yaml \

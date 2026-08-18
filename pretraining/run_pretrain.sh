@@ -18,19 +18,34 @@
 #   bash run_pretrain.sh
 #
 # All inputs are environment variables (with sensible defaults below).
+#
+# No venv activation needed: the run goes through `uv run`, which syncs
+# `pretraining/.venv` from uv.lock first. Override the binary with UV=/path/to/uv.
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Directory holding this script, i.e. the `pretraining/` subtree -- not the repo
+# root. Also the uv project root (pyproject.toml / uv.lock / .venv live here).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+UV="${UV:-$(command -v uv || true)}"
+if [[ -z "${UV}" && -x "${HOME}/.local/bin/uv" ]]; then
+  UV="${HOME}/.local/bin/uv"
+fi
+if [[ -z "${UV}" ]]; then
+  echo "ERROR: uv not found on PATH. Install it or set UV=/path/to/uv." >&2
+  exit 1
+fi
 
 # ---- Configurable inputs (override via env) ---------------------------------
 # Either CONFIG (single yaml) or CONFIG_DIR (run every yaml in the dir).
 CONFIG="${CONFIG:-}"
 CONFIG_DIR="${CONFIG_DIR:-}"
-# Directory of tokenized pretraining shards (.npy). Maps to data.txt_path.
-DATA_DIR="${DATA_DIR:-${REPO_ROOT}/data/pretrain_v1_54b}"
+# Directory of tokenized pretraining shards (.npy). Overrides data.txt_path.
+# Leave empty to use whatever txt_path the config already carries.
+DATA_DIR="${DATA_DIR:-}"
 # Where checkpoints are written. Maps to training.save_dir.
-OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/checkpoints}"
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/checkpoints}"
 # Optional base path for held-out eval rollout test files (data.test_data_dir).
 TEST_DATA_DIR="${TEST_DATA_DIR:-}"
 # GPUs for this run.
@@ -58,6 +73,12 @@ if [[ -z "${CONFIG}" && -z "${CONFIG_DIR}" ]]; then
   exit 1
 fi
 
+# A typo'd DATA_DIR should fail here, not a few minutes into the first run.
+if [[ -n "${DATA_DIR}" && ! -d "${DATA_DIR}" ]]; then
+  echo "ERROR: DATA_DIR='${DATA_DIR}' is not a directory." >&2
+  exit 1
+fi
+
 # Build the list of configs to run.
 configs=()
 if [[ -n "${CONFIG}" ]]; then
@@ -75,7 +96,7 @@ export WANDB_PROJECT="${WANDB_PROJECT}"
 
 echo "=========================================="
 echo "[pretrain] ${#configs[@]} config(s) | ${NUM_GPUS} GPU(s)"
-echo "[pretrain] data_dir=${DATA_DIR}"
+echo "[pretrain] data_dir=${DATA_DIR:-<from config data.txt_path>}"
 echo "[pretrain] output_dir=${OUTPUT_DIR}"
 echo "[pretrain] mixed_precision=${MIXED_PRECISION} | main_process_port=${MAIN_PROCESS_PORT}"
 echo "=========================================="
@@ -86,6 +107,7 @@ for cfg in "${configs[@]}"; do
   echo "------------------------------------------"
 
   extra_args=()
+  [[ -n "${DATA_DIR}" ]] && extra_args+=(--data_dir "${DATA_DIR}")
   [[ -n "${TEST_DATA_DIR}" ]] && extra_args+=(--test_data_dir "${TEST_DATA_DIR}")
   override_args=()
   if [[ -n "${OVERRIDES}" ]]; then
@@ -103,11 +125,11 @@ for cfg in "${configs[@]}"; do
     launch_args+=(--multi_gpu)
   fi
 
-  accelerate launch "${launch_args[@]}" \
-    "${REPO_ROOT}/scripts/train/train_hf.py" \
+  "${UV}" run --project "${SCRIPT_DIR}" \
+    accelerate launch "${launch_args[@]}" \
+    "${SCRIPT_DIR}/scripts/train/train_hf.py" \
     --config "${cfg}" \
     --auto_resume \
-    --data_dir "${DATA_DIR}" \
     --output_dir "${OUTPUT_DIR}" \
     --max_checkpoints "${MAX_CHECKPOINTS}" \
     "${override_args[@]}" \
