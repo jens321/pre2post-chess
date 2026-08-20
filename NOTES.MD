@@ -1,0 +1,1 @@
+Submitted jobs must have export HOME=/data/home/$USER
