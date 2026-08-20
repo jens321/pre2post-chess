@@ -1499,6 +1499,7 @@ class HFTrainer:
     def _expand_paths(self, items):
         """Expand dirs / globs / single files into a de-duplicated list[Path]."""
         import glob
+        import os
         from pathlib import Path
         def expand_one(p):
             p = Path(p)
@@ -1525,9 +1526,13 @@ class HFTrainer:
             out.extend(expand_one(it))
 
         # de-dup while preserving insertion order (shard_dir → filename order)
+        # abspath, not resolve(): resolve() realpath()s every path component, and
+        # on an NFS mount with lookupcache=none that is a server round-trip per
+        # component (~30ms/file measured). Across ~47k shards x 8 ranks that is
+        # ~20min of startup before the first step. abspath is pure string work.
         seen = set()
         uniq = []
-        for p in (Path(p).resolve() for p in out):
+        for p in (Path(os.path.abspath(p)) for p in out):
             if p not in seen:
                 seen.add(p)
                 uniq.append(p)
