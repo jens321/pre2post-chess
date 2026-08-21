@@ -486,9 +486,32 @@ class HFTrainer:
             shutil.rmtree(old)
 
     # ---------------- flops / mfu ----------------
+    def _base_model(self):
+        """Unwrap DDP and torch.compile wrappers to reach the underlying module.
+
+        This deliberately avoids accelerate's unwrap_model. As of accelerate
+        1.10.1, extract_model_from_parallel has a `has_compiled_regions` branch
+        that reads _orig_mod out of __dict__ -- but a model whose *submodules*
+        were compiled has no _orig_mod at all, so that lookup raises KeyError
+        and any torch.compile run dies at startup. Unwrapping by hand sidesteps
+        it, and matches what unwrap_model does for the uncompiled path anyway.
+        """
+        from torch.nn import DataParallel
+        from torch.nn.parallel import DistributedDataParallel
+
+        model = self.model
+        for _ in range(8):
+            if hasattr(model, "_orig_mod"):  # torch.compile wrapper
+                model = model._orig_mod
+            elif isinstance(model, (DistributedDataParallel, DataParallel)):
+                model = model.module
+            else:
+                break
+        return model
+
     def _estimate_flops_per_token(self):
         """Estimate FLOPs per token for forward + backward pass (approx 6N)."""
-        base_model = self.acc.unwrap_model(self.model) if hasattr(self.acc, 'unwrap_model') else self.model
+        base_model = self._base_model()
         n_params = sum(p.numel() for p in base_model.parameters())
         return 6 * n_params
 
@@ -745,7 +768,7 @@ class HFTrainer:
     def _evaluate(self, current_step: int, max_steps: int | None = None):
         metrics = {}
         if self.eval_loader is not None:
-            base_model = self.acc.unwrap_model(self.model)
+            base_model = self._base_model()
             base_model.eval()
             total_loss, total_entropy, n = 0.0, 0.0, 0
             for i, (x, y) in enumerate(self.eval_loader):
@@ -1179,7 +1202,7 @@ class HFTrainer:
         """
         metrics = {}
         
-        base_model = self.acc.unwrap_model(self.model)
+        base_model = self._base_model()
         base_model.eval()
         if hasattr(base_model, "gradient_checkpointing_disable"):
             base_model.gradient_checkpointing_disable()
@@ -1408,7 +1431,7 @@ class HFTrainer:
         path.mkdir(parents=True, exist_ok=True)
 
         # Unwrap model from accelerator
-        base_model = self.acc.unwrap_model(self.model)
+        base_model = self._base_model()
 
         base_model.config.vocab_size = self.vocab_size
         base_model.config.bos_token_id = self.tok.bos_id()
