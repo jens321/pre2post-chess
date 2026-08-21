@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // preLaunchTask for the debug configs. The venv lives on node-local /tmp
+      // (see pretraining/cluster-env.sh for why), which does not survive pod recreation
+      // -- without this, the first debug launch after a restart fails with a
+      // missing interpreter. `uv sync` is ~0.1 s once the cache is warm.
+      "label": "uv sync (local venv)",
+      "type": "shell",
+      "command": "\"${env:HOME}/.local/bin/uv\" sync --project \"${workspaceFolder}/pretraining\"",
+      "options": {
+        "env": {
+          // UV_CACHE_DIR is not needed here: ~/.config/uv/uv.toml sets cache-dir
+          // and uv reads that with no shell involvement.
+          "UV_PROJECT_ENVIRONMENT": "/tmp/uv-envs/pre2post-pretraining",
+          "UV_PYTHON_INSTALL_DIR": "/tmp/uv-python"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "close": true
+      }
+    }
+  ]
+}

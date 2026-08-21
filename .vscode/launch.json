@@ -1,0 +1,77 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Same thing run_pretrain.sh does, minus `accelerate launch` (which would
+      // fork a subprocess). Single process => breakpoints just hit.
+      "name": "Pretrain (debug, 1 GPU)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/pretraining/scripts/train/train_hf.py",
+      // Node-local venv, mirroring UV_PROJECT_ENVIRONMENT in
+      // pretraining/cluster-env.sh (VS Code cannot source a shell file here, so
+      // the path is duplicated -- change both together).
+      // A venv under pretraining/.venv is on the NFS PVC and costs ~60 s per
+      // `import torch`; this one costs ~1.5 s. Keep the two in sync.
+      "python": "/tmp/uv-envs/pre2post-pretraining/bin/python",
+      "preLaunchTask": "uv sync (local venv)",
+      "cwd": "${workspaceFolder}/pretraining",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--config", "config/configs/6p5e18/20m_alpha0.050.yaml",
+        "--data_dir", "/data/home/jtuyls/data/pre2post-chess/pretrain_v1_20b",
+        "--output_dir", "${workspaceFolder}/pretraining/checkpoints/debug",
+        "--max_checkpoints", "1",
+        // Keep a debug step cheap and keep the data pipeline in-process:
+        // num_workers>0 puts collate/dataset code in worker subprocesses.
+        "--override",
+        "training.num_workers=0",
+        "training.batch_size=2",
+        "training.gradient_accumulation_steps=1",
+        "training.log_interval=1",
+        "data.num_shards=1"
+      ],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYTHONUNBUFFERED": "1",
+        "WANDB_MODE": "disabled",
+        "TOKENIZERS_PARALLELISM": "false"
+      }
+    },
+    {
+      // Use this one only if the bug is launcher/multi-GPU specific.
+      // subProcess:true follows accelerate's forked ranks; expect the debugger
+      // to stop in whichever rank hits the breakpoint first.
+      "name": "Pretrain (debug, via accelerate launch)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "accelerate.commands.launch",
+      "python": "/tmp/uv-envs/pre2post-pretraining/bin/python",
+      "preLaunchTask": "uv sync (local venv)",
+      "cwd": "${workspaceFolder}/pretraining",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "args": [
+        "--num_processes", "1",
+        "--num_machines", "1",
+        "--mixed_precision", "bf16",
+        "--dynamo_backend", "no",
+        "${workspaceFolder}/pretraining/scripts/train/train_hf.py",
+        "--config", "config/configs/6p5e18/20m_alpha0.050.yaml",
+        "--data_dir", "/data/home/jtuyls/data/pre2post-chess/pretrain_v1_20b",
+        "--output_dir", "${workspaceFolder}/pretraining/checkpoints/debug",
+        "--override",
+        "training.num_workers=0",
+        "training.batch_size=2",
+        "data.num_shards=1"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "WANDB_MODE": "disabled",
+        "TOKENIZERS_PARALLELISM": "false"
+      }
+    }
+  ]
+}
