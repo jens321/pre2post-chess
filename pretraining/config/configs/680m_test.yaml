@@ -1,0 +1,75 @@
+# C_total=6.5e18, alpha=0.050 -- speed-test variant of 680m_alpha0.050.yaml
+# Model: 678,487,040 params (measured -- trainer logs this at startup)
+# Architecture: n_layer=30, n_embed=1280, n_head=20, kv_heads=4, head_dim=128, intermediate=3840
+#
+# NOTE: the source sweep config's header says n_layer=28, kv_heads=8 and "670.5M
+# params", which disagrees with its own body (n_layer: 30,
+# num_key_value_heads: 4). The body is what reaches Qwen3Config, so the body is
+# what is mirrored here -- and the body builds 678.5M, not 670.5M. The header's
+# architecture would give 669.96M, matching its claim, so the header describes
+# an intent the body drifted from. Switching to it is roughly params-neutral
+# (-1.2%), so the batch size below would probably still fit, but it sits at
+# 93.0% of HBM and was not measured that way.
+#
+# Differences from the sweep config: gradient_accumulation_steps 2 -> 1,
+# pretrain_tokens cut to a token stub (override it for an actual speed run), and
+# batch_size raised to the measured 8x B200 maximum.
+
+model:
+  architecture: "Qwen/Qwen3-0.6B"
+  block_size: 1024
+  n_layer: 30
+  n_head: 20
+  num_key_value_heads: 4
+  head_dim: 128
+  n_embed: 1280
+  intermediate_size: 3840
+  dropout: 0.0
+
+training:
+  device: "cuda"
+  # Measured on 8x B200 (183 GB each), seq_len 1024, bf16, per-device batch:
+  #   bs   tok/s    mem/GPU   util
+  #   32   490.2K    90.4 GB   97% (min 92%)
+  #   64   516.6K   170.5 GB  100%   <- largest that fits (93.0% of HBM)
+  #   96   OOM
+  # 64 buys +5.4% over 32 and is the only setting that saturates all 8 GPUs.
+  # eval_batch_size defaults to this value, and the step-10 eval ran at bs=64
+  # without OOM (eval is no-grad, so it needs less memory than training).
+  batch_size: 64
+  gradient_accumulation_steps: 1
+  # Peak bf16 dense TFLOPS of one GPU, used only for the logged mfu metric.
+  # Default is 312 (A100); B200 is ~2250. Note the trainer divides total
+  # achieved TFLOPS across all ranks by this, so logged mfu is ~num_gpus too
+  # high -- divide by NUM_GPUS for true per-GPU MFU.
+  gpu_peak_tflops: 2250
+  epochs: 1
+  experiment_name: "680m_speed_test"
+  optimizer:
+    name: adamw
+    lr: 1e-3
+    weight_decay: 0.1
+    betas: [0.9, 0.95]
+  scheduler:
+    name: cosine
+    eta_min: 1e-4
+    warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  log_interval: 10
+  num_workers: 8
+  save_dir: "checkpoints"
+
+data:
+  txt_path: "/data/pretrain_v1_54b"
+  pretrain_tokens: 100000000
+  # Placeholder held-out eval shards -- replace with your own paths.
+  # If none of them exist, the trainer warns and holds out the last
+  # `eval_holdout` training shards instead.
+  eval_txt_files:
+    - "/data/eval/holdout_shard_00.npy"
+    - "/data/eval/holdout_shard_01.npy"
+
+tokenizer:
+  name: "LanTokenizer"
+  special_tokens: ["<bos>", "<eos>", "<pad>"]
+  include_move_numbers: false

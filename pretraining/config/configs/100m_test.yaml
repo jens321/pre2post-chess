@@ -1,0 +1,75 @@
+# C_total=6.5e18, alpha=0.050 -- speed-test variant of 100m_alpha0.050.yaml
+# Model: 101,534,208 params (measured -- trainer logs this at startup)
+# Architecture: n_layer=12, n_embed=768, n_head=12, kv_heads=4, head_dim=128, intermediate=2304
+#
+# NOTE: the source sweep config's header says kv_heads=8 and "111.3M params",
+# which disagrees with its own body (num_key_value_heads: 4). The body is what
+# reaches Qwen3Config, so the body is what is mirrored here -- and the body
+# builds 101.5M, not 111.3M. Setting kv_heads=8 would give 110.97M, matching the
+# header's claim, so the header describes an intent the body drifted from.
+# If you want the header's architecture instead, set num_key_value_heads: 8 --
+# but that adds ~9% params and the batch size below (95.8% of HBM) will OOM.
+#
+# Differences from the sweep config: gradient_accumulation_steps 2 -> 1,
+# pretrain_tokens cut to a token stub (override it for an actual speed run), and
+# batch_size raised to the measured 8x B200 maximum.
+
+model:
+  architecture: "Qwen/Qwen3-0.6B"
+  block_size: 1024
+  n_layer: 12
+  n_head: 12
+  num_key_value_heads: 4
+  head_dim: 128
+  n_embed: 768
+  intermediate_size: 2304
+  dropout: 0.0
+
+training:
+  device: "cuda"
+  # Measured on 8x B200 (183 GB each), seq_len 1024, bf16, per-device batch:
+  #   bs   tok/s    mem/GPU   util
+  #   128  2.155M    89.0 GB  100%
+  #   256  2.195M   175.6 GB  100%   <- largest that fits (95.8% of HBM)
+  #   384  OOM
+  # Throughput is flat: 256 buys +1.8% over 128 for 2x the memory, so 128 is the
+  # better pick for real runs. 256 does fit end to end -- the step-10 eval ran at
+  # 95.8% of HBM without OOM (eval is no-grad, so it needs less memory than
+  # training even though eval_batch_size defaults to this value).
+  batch_size: 256
+  gradient_accumulation_steps: 1
+  # Peak bf16 dense TFLOPS of one GPU, used only for the logged mfu metric.
+  # Default is 312 (A100); B200 is ~2250. Note the trainer divides total
+  # achieved TFLOPS across all ranks by this, so logged mfu is ~num_gpus too
+  # high -- divide by NUM_GPUS for true per-GPU MFU.
+  gpu_peak_tflops: 2250
+  epochs: 1
+  experiment_name: "100m_speed_test"
+  optimizer:
+    name: adamw
+    lr: 1e-3
+    weight_decay: 0.1
+    betas: [0.9, 0.95]
+  scheduler:
+    name: cosine
+    eta_min: 1e-4
+    warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  log_interval: 10
+  num_workers: 8
+  save_dir: "checkpoints"
+
+data:
+  txt_path: "/data/pretrain_v1_54b"
+  pretrain_tokens: 100000000
+  # Placeholder held-out eval shards -- replace with your own paths.
+  # If none of them exist, the trainer warns and holds out the last
+  # `eval_holdout` training shards instead.
+  eval_txt_files:
+    - "/data/eval/holdout_shard_00.npy"
+    - "/data/eval/holdout_shard_01.npy"
+
+tokenizer:
+  name: "LanTokenizer"
+  special_tokens: ["<bos>", "<eos>", "<pad>"]
+  include_move_numbers: false

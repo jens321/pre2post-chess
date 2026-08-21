@@ -1,0 +1,66 @@
+# C_total=6.5e18, alpha=0.050
+# Model: ~20M (20.5M params)
+# Architecture: n_layer=6, n_embed=512, n_head=4, kv_heads=4, head_dim=128, intermediate=1536
+# Pretrain tokens: 2,641,541,000 (2303 shards, 2301 train + 2 eval)
+# Estimated steps: ~80613
+
+model:
+  architecture: "Qwen/Qwen3-0.6B"
+  block_size: 1024
+  n_layer: 6
+  n_head: 4
+  num_key_value_heads: 4
+  head_dim: 128
+  n_embed: 512
+  intermediate_size: 1536
+  dropout: 0.0
+
+training:
+  device: "cuda"
+  # Measured on 8x B200 (183 GB each), seq_len 1024, bf16, per-device batch:
+  #   bs   tok/s    mem/GPU   util
+  #   128  8.01M    29.7 GB   99%
+  #   512  8.54M   111.5 GB  100%
+  #   768  8.58M   166.0 GB  100%   <- largest that fits (90.6% of HBM)
+  #  1024  OOM
+  # Throughput saturates by 128; 768 buys +7% for 5.6x the memory. Drop to 512
+  # if you want headroom. Note eval_batch_size defaults to this value, and the
+  # step-10 eval did run at bs=768 without OOM (eval is no-grad, so it stores no
+  # backward activations and needs less memory than training).
+  batch_size: 768
+  gradient_accumulation_steps: 1
+  # Peak bf16 dense TFLOPS of one GPU, used only for the logged mfu metric.
+  # Default is 312 (A100); B200 is ~2250. Note the trainer divides total
+  # achieved TFLOPS across all ranks by this, so logged mfu is ~num_gpus too
+  # high -- divide by NUM_GPUS for true per-GPU MFU.
+  gpu_peak_tflops: 2250
+  epochs: 1
+  experiment_name: "20m_speed_test"
+  optimizer:
+    name: adamw
+    lr: 1e-3
+    weight_decay: 0.1
+    betas: [0.9, 0.95]
+  scheduler:
+    name: cosine
+    eta_min: 1e-4
+    warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  log_interval: 10
+  num_workers: 8
+  save_dir: "checkpoints"
+
+data:
+  txt_path: "/data/pretrain_v1_54b"
+  pretrain_tokens: 100000000
+  # Placeholder held-out eval shards -- replace with your own paths.
+  # If none of them exist, the trainer warns and holds out the last
+  # `eval_holdout` training shards instead.
+  eval_txt_files:
+    - "/data/eval/holdout_shard_00.npy"
+    - "/data/eval/holdout_shard_01.npy"
+
+tokenizer:
+  name: "LanTokenizer"
+  special_tokens: ["<bos>", "<eos>", "<pad>"]
+  include_move_numbers: false
