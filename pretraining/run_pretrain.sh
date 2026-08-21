@@ -19,14 +19,22 @@
 #
 # All inputs are environment variables (with sensible defaults below).
 #
-# No venv activation needed: the run goes through `uv run`, which syncs
-# `pretraining/.venv` from uv.lock first. Override the binary with UV=/path/to/uv.
+# No venv activation needed: the run goes through `uv run`, which syncs the
+# environment from uv.lock first. Override the binary with UV=/path/to/uv.
+#
+# If `cluster-env.sh` sits next to this script it is sourced first; that is
+# where the environment layout lives (e.g. a venv on node-local disk instead of
+# a network filesystem). It is tracked, so a fresh clone gets the fast path; the
+# `-f` guard keeps this working if someone deletes it.
 
 set -euo pipefail
 
 # Directory holding this script, i.e. the `pretraining/` subtree -- not the repo
-# root. Also the uv project root (pyproject.toml / uv.lock / .venv live here).
+# root. Also the uv project root (pyproject.toml / uv.lock live here).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=/dev/null
+[[ -f "${SCRIPT_DIR}/cluster-env.sh" ]] && source "${SCRIPT_DIR}/cluster-env.sh"
 
 UV="${UV:-$(command -v uv || true)}"
 if [[ -z "${UV}" && -x "${HOME}/.local/bin/uv" ]]; then
@@ -99,6 +107,7 @@ echo "[pretrain] ${#configs[@]} config(s) | ${NUM_GPUS} GPU(s)"
 echo "[pretrain] data_dir=${DATA_DIR:-<from config data.txt_path>}"
 echo "[pretrain] output_dir=${OUTPUT_DIR}"
 echo "[pretrain] mixed_precision=${MIXED_PRECISION} | main_process_port=${MAIN_PROCESS_PORT}"
+echo "[pretrain] venv=${UV_PROJECT_ENVIRONMENT:-${SCRIPT_DIR}/.venv}"
 echo "=========================================="
 
 for cfg in "${configs[@]}"; do
